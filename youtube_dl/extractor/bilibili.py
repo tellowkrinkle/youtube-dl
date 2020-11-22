@@ -10,6 +10,7 @@ from ..compat import (
     compat_urlparse,
 )
 from ..utils import (
+    determine_ext,
     ExtractorError,
     int_or_none,
     float_or_none,
@@ -448,3 +449,53 @@ class BiliBiliPlayerIE(InfoExtractor):
         return self.url_result(
             'http://www.bilibili.tv/video/av%s/' % video_id,
             ie=BiliBiliIE.ie_key(), video_id=video_id)
+
+class BiliBiliRecordIE(InfoExtractor):
+    IE_DESC = 'BiliBili Live Recording'
+    IE_NAME = 'bilibili:record'
+    _VALID_URL = r'https?://live\.bilibili\.com/record/(?P<id>R[^/?#&]+)'
+    _TESTS = [] # Live recordings aren't kept forever so nothing here would continue passing for more than a month or so
+
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
+        video_info = self._download_json('https://api.live.bilibili.com/xlive/web-room/v1/record/getInfoByLiveRecord?rid=%s' % video_id, video_id=video_id, note='Downloading video info')['data']['live_record_info']
+        channel_id = video_info.get('room_id')
+        channel_url = 'https://live.bilibili.com/%d' % channel_id if channel_id else None
+        rid = video_info.get('rid') or video_id
+
+        video_fragment_url = 'https://api.live.bilibili.com/xlive/web-room/v1/record/getLiveRecordUrl?rid=%s&platform=html5' % video_id
+        video_urls = self._download_json(video_fragment_url, video_id=video_id, note='Downloading video urls')['data']
+        def process_entry(entry):
+            return {
+                'url': entry['url'],
+                'filesize': entry.get('size'),
+                'duration': entry['length'] / 1000 if 'length' in entry else None
+            }
+        fragments = [process_entry(x) for x in video_urls['list']]
+
+        qn = video_urls.get('current_qn')
+        qn_desc = None
+        if qn and 'qn_desc' in video_urls:
+            for desc in video_urls['qn_desc']:
+                if desc.get('qn') == qn:
+                    qn_desc = desc.get('desc')
+
+
+        return {
+            'id': video_info.get('rid') or video_id,
+            'title': video_info.get('title'),
+            'url': 'https://live.bilibili.com/record/%s' % rid,
+            'channel_id': channel_id,
+            'channel_url': channel_url,
+            'timestamp': video_info.get('start_timestamp'),
+            'duration': video_urls['length'] / 1000 if 'length' in video_urls else None,
+            'formats': [{
+                'url': video_fragment_url,
+                'ext': determine_ext(fragments[0]['url']),
+                'manifest_url': video_fragment_url,
+                'protocol': 'http_dash_segments',
+                'format_note': qn_desc,
+                'vbr': qn,
+                'fragments': fragments
+            }]
+        }

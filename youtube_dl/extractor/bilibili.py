@@ -121,6 +121,65 @@ class BiliBiliIE(InfoExtractor):
         else:
             raise ExtractorError('Can\'t extract Bangumi episode ID')
 
+    def extract_playinfo(self, playinfo):
+        if 'dash' not in playinfo:
+            return
+        duration = playinfo['timelength'] / 1000 if 'timelength' in playinfo else None
+        dash = playinfo['dash']
+        accept_quality = playinfo.get('accept_quality', [])
+        accept_desc = playinfo.get('accept_description', [])
+        quality_desc = {k: v for k, v in zip(accept_quality, accept_desc)}
+        formats = []
+        def load(arr, is_video):
+            for media in arr:
+                url = media.get('baseUrl') or media.get('base_url')
+                id = media.get('id')
+                codec_id = media.get('codecid')
+                format_id = str(id) + '_' + str(codec_id) if codec_id else str(id)
+                if url and id is not None:
+                    bandwidth = media.get('bandwidth') / 1000 if 'bandwidth' in media else None
+                    codec = media.get('codecs')
+                    frame_rate = media.get('frameRate') or media.get('frame_rate', '')
+                    if '/' in frame_rate:
+                        parts = frame_rate.split('/')
+                        frame_rate = round(int(parts[0])/int(parts[1]))
+                    else:
+                        frame_rate = int_or_none(frame_rate)
+                    obj = {
+                        'url': url,
+                        'ext': 'mp4' if is_video else 'm4a',
+                        'format_id': format_id,
+                        'format_note': quality_desc.get(id),
+                        'fps': frame_rate,
+                        'filesize_approx': bandwidth * duration * 1000 / 8 if bandwidth and duration else None,
+                    }
+                    if is_video:
+                        obj.update({
+                            'vcodec': codec,
+                            'acodec': 'none',
+                            'vbr': bandwidth,
+                            'width': media.get('width'),
+                            'height': media.get('height')
+                        })
+                    else:
+                        obj.update({
+                            'acodec': codec,
+                            'vcodec': 'none',
+                            'abr': bandwidth,
+                        })
+                    formats.append(obj)
+        video = dash.get('video')
+        audio = dash.get('audio')
+        if video and audio:
+            load(video, True)
+            load(audio, False)
+        if formats:
+            self._sort_formats(formats)
+            return {
+                'duration': duration,
+                'formats': formats,
+            }
+
     def _real_extract(self, url):
         url, smuggled_data = unsmuggle_url(url, {})
 
@@ -128,6 +187,9 @@ class BiliBiliIE(InfoExtractor):
         video_id = mobj.group('id') or mobj.group('id_bv')
         anime_id = mobj.group('anime_id')
         webpage = self._download_webpage(url, video_id)
+
+        playinfo = self._search_regex(r'window.__playinfo__\s*=({.*})\s*</script>', webpage, 'playinfo', default='{}')
+        playinfo = self._parse_json(playinfo, video_id).get('data', {})
 
         if 'anime/' not in url:
             cid = self._search_regex(
@@ -206,6 +268,14 @@ class BiliBiliIE(InfoExtractor):
                     'formats': formats,
                 })
             break
+
+        playinfo_entry = self.extract_playinfo(playinfo)
+        if playinfo_entry:
+            if entries:
+                entries[0]['formats'].extend(playinfo_entry['formats'])
+            else:
+                playinfo_entry['id'] = video_id
+                entries.append(playinfo_entry)
 
         title = self._html_search_regex(
             ('<h1[^>]+\btitle=(["\'])(?P<title>(?:(?!\1).)+)\1',

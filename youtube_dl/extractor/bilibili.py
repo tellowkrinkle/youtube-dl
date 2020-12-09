@@ -520,6 +520,34 @@ class BiliBiliPlayerIE(InfoExtractor):
             'http://www.bilibili.tv/video/av%s/' % video_id,
             ie=BiliBiliIE.ie_key(), video_id=video_id)
 
+class BiliBiliChannelVideoIE(InfoExtractor):
+    IE_DESC = 'BiliBili Channel Videos'
+    IE_NAME = 'bilibili:channel'
+    _VALID_URL = r'https?://space.bilibili.com/(?P<id>\d+)/video'
+    _TESTS = [] # TODO
+
+    def _real_extract(self, url):
+        channel_id = self._match_id(url)
+        i = 1
+        items = []
+        while True:
+            url = 'https://api.bilibili.com/x/space/arc/search?mid=%s&ps=30&pn=%d' % (channel_id, i)
+            response = self._download_json(url, video_id=channel_id, note='Downloading channel video page %d' % i)
+            list = response['data']['list']['vlist']
+            items.extend([{
+                '_type': 'url_transparent',
+                'url': 'https://www.bilibili.com/video/%s' % item['bvid'],
+                'ie_key': BiliBiliIE.ie_key(),
+                'title': item.get('title'),
+                'description': item.get('description'),
+                'timestamp': item.get('created'),
+            } for item in list])
+            if not list or len(items) >= response['data']['page']['count']:
+                break
+            i += 1
+
+        return self.playlist_result(items, playlist_id=channel_id)
+
 class BiliBiliRecordIE(InfoExtractor):
     IE_DESC = 'BiliBili Live Recording'
     IE_NAME = 'bilibili:record'

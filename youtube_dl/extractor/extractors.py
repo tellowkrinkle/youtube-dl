@@ -107,6 +107,7 @@ from .bilibili import (
     BilibiliAudioIE,
     BilibiliAudioAlbumIE,
     BiliBiliPlayerIE,
+    BiliBiliChannelVideoIE,
     BiliBiliRecordIE,
 )
 from .biobiochiletv import BioBioChileTVIE
